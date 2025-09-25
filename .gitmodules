@@ -1,0 +1,4 @@
+[submodule "BorealHDR"]
+	path = BorealHDR
+	url = git@github.com:norlab-ulaval/BorealHDR.git
+	branch = differentiable

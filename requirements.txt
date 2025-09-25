@@ -1,0 +1,17 @@
+albumentations
+lightning
+matplotlib
+numpy
+opencv-python
+pandas
+python-math
+pyyaml
+rasterio
+rich
+scikit-image
+scikit-learn
+scipy
+torch
+torchvision
+tqdm
+wandb
