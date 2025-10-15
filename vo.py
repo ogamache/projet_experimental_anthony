@@ -12,6 +12,7 @@ import yaml
 import kornia.feature as KF
 from kornia_moons.viz import *
 from pyutils import progress, Colors
+from scipy.spatial.transform import Rotation
 
 class DifferentiableVO(torch.nn.Module):
     def __init__(self, K: torch.Tensor, homogeneous: bool = False):
@@ -128,6 +129,15 @@ def main():
 
     Ms = torch.cat(Ms, dim=0)
     torch.save(Ms, 'vo_poses.pth')
+
+    # Save as tum format
+    timestamps = files[1:]
+    M = torch.eye(4)
+    for i in range(len(timestamps)):
+        M = M @ Ms[i]
+        t = M[:3, 3].numpy()
+        R = M[:3, :3].numpy()
+        r = Rotation.from_matrix(R).as_quat()
 
 if __name__ == '__main__':
     main()
