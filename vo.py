@@ -1,7 +1,8 @@
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as F
-from loftr import LoFTR
+# from loftr import LoFTR
+from kornia.feature import LoFTR
 import numpy as np
 from datetime import datetime
 from kornia.geometry import epipolar
@@ -13,6 +14,7 @@ import kornia.feature as KF
 from kornia_moons.viz import *
 from pyutils import progress, Colors
 from scipy.spatial.transform import Rotation
+import time
 
 class DifferentiableVO(torch.nn.Module):
     def __init__(self, K: torch.Tensor, homogeneous: bool = False):
@@ -40,14 +42,12 @@ class DifferentiableVO(torch.nn.Module):
         return R, t
 
     def forward(self, img1: torch.Tensor, img2: torch.Tensor):
-        print("Getting keypoints...")
         kp1, kp2, confidence = self.get_keypoints(img1, img2)
-        print("Estimating motion...")
         R, t = self.motion_from_keypoints(kp1, kp2, confidence)
         if self.homogeneous:
             # Differentiable homogeneous transformation matrix [B, 4, 4]
-            R_tmp = torch.cat((R, torch.zeros(1, 1, 3)), dim=1)
-            t_tmp = torch.cat((t, torch.ones(1, 1, 1)), dim=1)
+            R_tmp = torch.cat((R, torch.zeros(R.size(0), 1, 3, device=R.device)), dim=1)
+            t_tmp = torch.cat((t, torch.ones(t.size(0), 1, 1, device=t.device)), dim=1)
             M = torch.cat((R_tmp, t_tmp), dim=2)
             return M
         else:
@@ -91,13 +91,13 @@ def main():
         [K_data[0], K_data[1], K_data[2]],
         [K_data[3], K_data[4], K_data[5]],
         [K_data[6], K_data[7], K_data[8]]
-    ], dtype=torch.float32).unsqueeze(0)
+    ], dtype=torch.float32, device=device).unsqueeze(0)
 
     # Loading VO model
-    vo = DifferentiableVO(K, homogeneous=True)
+    vo = DifferentiableVO(K, homogeneous=True).to(device)
 
     # Load images
-    path = Path("../BorealHRD_dataset/backpack_2023-09-27-12-46-32/camera_left")
+    path = Path("/media/alienware/T7_Shield/ICRA2024_OG/dataset/belair-09-27-2023/data_high_resolution/backpack_2023-09-27-12-46-32/camera_left")
     bracket = str(16.0)
 
     files = [Path(filepath).name for filepath in glob.glob(str(path / bracket / "*.png"))]
@@ -108,9 +108,11 @@ def main():
     imgs2 = []
     for f in progress(files[1:]):
         img1 = torch.from_numpy(cv2.imread(str(path / bracket / ref_img), cv2.IMREAD_ANYDEPTH) / 16).to(torch.float)
-        img1 = img1.reshape(1, 1, img1.shape[0], img1.shape[1]) / 256
+        img1 = F.interpolate(img1.reshape(1, 1, img1.shape[0], img1.shape[1]) / 256, size=(400, 640))
+
         img2 = torch.from_numpy(cv2.imread(str(path / bracket / f), cv2.IMREAD_ANYDEPTH) / 16).to(torch.float)
-        img2 = img2.reshape(1, 1, img2.shape[0], img2.shape[1]) / 256
+        img2 = F.interpolate(img2.reshape(1, 1, img2.shape[0], img2.shape[1]) / 256, size=(400, 640))
+
         ref_img = f
         imgs1.append(img1)
         imgs2.append(img2)
@@ -118,26 +120,32 @@ def main():
     img1s = torch.cat(imgs1, dim=0)
     img2s = torch.cat(imgs2, dim=0)
 
-    Ms = []
+    Ms = [torch.eye(4, device=device)]
     with torch.inference_mode():
         # Run batched VO
         for i in progress(range(0, img1s.shape[0], B_size), desc="Running VO"):
             img1 = img1s[i:i+B_size].to(device)
             img2 = img2s[i:i+B_size].to(device)
             M = vo(img1, img2)
-            Ms.append(M.cpu())
+            # print(M.shape)
+            Ms.append(Ms[-1] @ M)
 
-    Ms = torch.cat(Ms, dim=0)
-    torch.save(Ms, 'vo_poses.pth')
-
+    # Ms = torch.cat(Ms, dim=0)
+    # torch.save(Ms, 'vo_poses.pth')
+    # Ms = torch.load('vo_poses.pth')
     # Save as tum format
     timestamps = files[1:]
-    M = torch.eye(4)
-    for i in range(len(timestamps)):
-        M = M @ Ms[i]
-        t = M[:3, 3].numpy()
-        R = M[:3, :3].numpy()
-        r = Rotation.from_matrix(R).as_quat()
+    timestamps = [int(f.split(".")[0]) / 1e9 for f in timestamps]
+    # M = [torch.eye(4)]
+    # print(Ms.shape)
+    with open('trajectory.txt', 'w') as f:
+        for i in range(len(Ms)):
+            M = Ms[i].detach().cpu().numpy().squeeze()
+            t = M[:3, 3]
+            R = M[:3, :3]
+            q = Rotation.from_matrix(R).as_quat()
+            f.write(f"{timestamps[i]} {t[0]} {t[1]} {t[2]} {q[0]} {q[1]} {q[2]} {q[3]}\n")
+
 
 if __name__ == '__main__':
     main()
