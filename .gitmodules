@@ -2,3 +2,6 @@
 	path = BorealHDR
 	url = git@github.com:norlab-ulaval/BorealHDR.git
 	branch = differentiable
+[submodule "DROID-SLAM"]
+	path = DROID-SLAM
+	url = https://github.com/princeton-vl/DROID-SLAM.git

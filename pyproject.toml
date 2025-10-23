@@ -3,15 +3,17 @@ name = "projet-experimental-anthony"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.10"
 dependencies = [
     "albumentations>=2.0.8",
-    "antho-utils>=0.1.0",
-    "kornia>=0.8.1",
-    "kornia-moons>=0.2.9",
+    "droid-backends",
+    "lietorch",
     "lightning>=2.5.5",
     "matplotlib>=3.10.7",
-    "numpy>=2.3.3",
+    "moderngl>=5.12.0",
+    "moderngl-window>=3.1.1",
+    "numpy>=2.2.6",
+    "open3d>=0.19.0",
     "opencv-python>=4.11.0.86",
     "pandas>=2.3.3",
     "python-math>=0.0.1",
@@ -20,9 +22,15 @@ dependencies = [
     "rich>=14.2.0",
     "scikit-image>=0.25.2",
     "scikit-learn>=1.7.2",
-    "scipy>=1.16.2",
-    "torch>=2.8.0",
-    "torchvision>=0.23.0",
+    "scipy>=1.15.3",
+    "torch>=2.9.0",
+    "torch-scatter",
+    "torchvision>=0.24.0",
     "tqdm>=4.67.1",
     "wandb>=0.22.2",
 ]
+
+[tool.uv.sources]
+torch-scatter = { git = "https://github.com/rusty1s/pytorch_scatter.git", rev = "6cf77c4" }
+lietorch = { git = "https://github.com/princeton-vl/lietorch.git", rev = "7f68764" }
+droid-backends = { path = "DROID-SLAM", editable = true }
