@@ -4,4 +4,5 @@
 	branch = differentiable
 [submodule "DROID-SLAM"]
 	path = DROID-SLAM
-	url = https://github.com/princeton-vl/DROID-SLAM.git
+	url = git@github.com:ogamache/DROID-SLAM.git
+	branch = train-ae
