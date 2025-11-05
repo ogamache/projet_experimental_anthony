@@ -29,7 +29,7 @@ NUM_FOLDS = args.folds  # Number of folds for cross-validation
 DATA_FOLDERS = [
     '/home/alienware/Desktop/tmp/training_trajs/'
 ]
-BATCH_SIZE = 10
+BATCH_SIZE = 2
 NUM_EPOCHS = 50
 PATIENCE = 20  # Set to NUM_EPOCHS to disable early stopping
 LEARNING_RATE = 0.0005

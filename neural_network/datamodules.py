@@ -6,7 +6,8 @@ from pytorch_lightning import LightningDataModule
 from sklearn.model_selection import KFold
 from torch.utils.data import DataLoader, Subset
 
-from datasets import AutoExposureDataset, AutoExposureCovarianceDataset, CovarianceDataset
+from datasets import CustomDataset
+from datasets import lightning_collate_fn
 
 
 class DataModule(LightningDataModule):
@@ -36,14 +37,14 @@ class DataModule(LightningDataModule):
         transform = A.Compose(
             [
                 A.Resize(width=input_size[0], height=input_size[1], p=1),
-                A.VerticalFlip(p=0.2),
-                A.HorizontalFlip(p=0.2),
+                # A.VerticalFlip(p=0.2),
+                # A.HorizontalFlip(p=0.2),
                 A.Normalize(normalization="min_max", p=1),
                 ToTensorV2(),
             ]
         )
 
-        self.full_dataset = AutoExposureCovarianceDataset(data_folders, transform)
+        self.full_dataset = CustomDataset(data_folders, transform)
         self.kfolds = KFold(n_splits=split_ratio, shuffle=True, random_state=split_seed)
         self.splits = [split for split in self.kfolds.split(self.full_dataset)]
         print(f"Dataset size: {len(self.full_dataset)}")
@@ -55,10 +56,10 @@ class DataModule(LightningDataModule):
         self.test_data = Subset(self.full_dataset, val_indices) # No test set from KFolds
 
     def train_dataloader(self):
-        return DataLoader(self.train_data, batch_size=self.batch_size, shuffle=True, num_workers=os.cpu_count() or 1)
+        return DataLoader(self.train_data, batch_size=self.batch_size, shuffle=True, num_workers=os.cpu_count() or 1, collate_fn=lightning_collate_fn)
 
     def val_dataloader(self):
-        return DataLoader(self.val_data, batch_size=self.batch_size, shuffle=False, num_workers=os.cpu_count() or 1)
+        return DataLoader(self.val_data, batch_size=self.batch_size, shuffle=False, num_workers=os.cpu_count() or 1, collate_fn=lightning_collate_fn)
 
     def test_dataloader(self):
-        return DataLoader(self.test_data, batch_size=self.batch_size, shuffle=False, num_workers=os.cpu_count() or 1)
+        return DataLoader(self.test_data, batch_size=self.batch_size, shuffle=False, num_workers=os.cpu_count() or 1, collate_fn=lightning_collate_fn)

@@ -6,10 +6,12 @@ from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchvision.models import ResNet18_Weights, resnet18, swin_v2_t
 
+from BorealHDR.scripts.classes.class_image_emulator import ImageEmulatorOneSequence 
+
 np.set_printoptions(precision=3)
 
 
-class ExposureNet(LightningModule):
+class BaseNet(LightningModule):
 
     def __init__(self, lr=0.0001):
         super().__init__()
@@ -19,24 +21,24 @@ class ExposureNet(LightningModule):
         self.save_hyperparameters()
 
     def training_step(self, batch, batch_idx):
-        images, targets = batch
-        outputs = self.forward(images.half())
+        images, first_exposure, next_brackets, targets = batch["image"], batch["first_exposure"], batch["next_brackets"], batch["target"]
+        outputs = self.forward(images.half(), first_exposure, next_brackets)
 
         loss = self.loss_factor(outputs, targets)
         self.log("train_loss", loss, prog_bar=True)
         return loss
 
     def validation_step(self, batch, batch_idx):
-        images, targets = batch
-        outputs = self.forward(images.half())
+        images, first_exposure, next_brackets, targets = batch["image"], batch["first_exposure"], batch["next_brackets"], batch["target"]
+        outputs = self.forward(images.half(), first_exposure, next_brackets)
 
         loss = self.loss_factor(outputs, targets)
         self.log("val_loss", loss, prog_bar=True)
         return loss
 
     def test_step(self, batch, batch_idx):
-        images, targets = batch
-        outputs = self.forward(images.half())
+        images, first_exposure, next_brackets, targets = batch["image"], batch["first_exposure"], batch["next_brackets"], batch["target"]
+        outputs = self.forward(images.half(), first_exposure, next_brackets)
 
         loss = self.loss_factor(outputs, targets)
         self.log("test_loss", loss, prog_bar=False)
@@ -47,34 +49,7 @@ class ExposureNet(LightningModule):
         Calculate the loss factor based on the outputs and targets.
         This is a placeholder method that can be overridden in subclasses.
         """
-
-        # Handle different target shapes
-        if len(targets.shape) > 1:
-            # For multi-dimensional targets (e.g., covariance matrices)
-            targets_flat = targets.view(-1).float()
-            outputs_flat = outputs.view(-1)
-            
-            # Ensure outputs and targets have compatible shapes
-            if outputs_flat.shape[0] != targets_flat.shape[0]:
-                min_size = min(outputs_flat.shape[0], targets_flat.shape[0])
-                outputs_flat = outputs_flat[:min_size]
-                targets_flat = targets_flat[:min_size]
-                print(f"Warning: Shape mismatch. Truncating to size {min_size}")
-        else:
-            # For 1D targets (e.g., single exposure values)
-            targets_flat = targets.float()
-            outputs_flat = outputs.view(-1)
-        
-        # Debug prints (uncomment if needed)
-        # print(f"Outputs shape: {outputs.shape} -> flattened: {outputs_flat.shape}")
-        # print(f"Targets shape: {targets.shape} -> flattened: {targets_flat.shape}")
-        
-        # print(f"Outputs: {outputs_flat[:5]}")
-        # print(f"Targets: {targets_flat[:5]}")
-
-        loss = F.mse_loss(outputs_flat, targets_flat, reduction="mean")
-
-        # print(f"Loss: {loss.item()}")
+        loss = F.mse_loss(outputs, targets)
 
         return loss
 
@@ -87,7 +62,7 @@ class ExposureNet(LightningModule):
         scheduler.step(metric)
 
 
-class ExposureResNet(ExposureNet):
+class ExposureResNet(BaseNet):
 
     def __init__(self, output_size=1, lr=0.0001):
         super().__init__(lr=lr)
@@ -97,9 +72,41 @@ class ExposureResNet(ExposureNet):
         self.input_depth(1)
         self.replace_head(output_size)
 
-    def forward(self, x):
-        x = self.model(x)
-        return x
+        self.bracketing_values = np.array([1.0, 2.0, 4.0, 8.0, 16.0, 32.0])
+        self.emulator = ImageEmulatorOneSequence(
+            calibration_file="pcalib_inside1.txt",
+            exposure_times_bracketing=self.bracketing_values,
+            color_bayer=False,
+            device='cuda'
+        )
+
+    def forward(self, x, first_exposure, next_brackets):
+        delta_next_exposure = self.model(x)
+        next_exposure = torch.abs(first_exposure * delta_next_exposure)
+        
+        # Process each sample in the batch individually
+        batch_size = x.shape[0]
+        emulated_images = []
+        for i in range(batch_size):
+            exposure_value = next_exposure[i].item()
+            bracket_paths = next_brackets[i]
+            
+            emulated_img = self.emulator.emulate_image(
+                exposure_value, 
+                bracket_paths
+            )["emulated_img"]
+            emulated_images.append(emulated_img)
+
+        # Stack the emulated images back into a batch
+        emulated_next_image = torch.stack(emulated_images)
+        
+        # TODO: Use next image and the actual (x) to pass into DROID-SLAM
+        # TODO: Compute loss by comparing DROID-SLAM result with lidar trajectory
+        return emulated_next_image
+    
+    def loss_factor(self, outputs, targets):
+        # TODO: Implement a custom loss function
+        return super().loss_factor(outputs, targets)
     
     def input_depth(self, depth):
         self.model.conv1 = torch.nn.Conv2d(depth, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)

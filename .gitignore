@@ -166,3 +166,7 @@ cython_debug/
 .idea/
 
 tmp*
+
+droid_slam
+
+DROID-SLAM/

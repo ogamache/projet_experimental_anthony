@@ -6,10 +6,14 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "albumentations>=2.0.8",
+    "boto3>=1.40.62",
+    "colorama>=0.4.6",
     "droid-backends",
+    "kornia>=0.8.1",
     "lietorch",
     "lightning>=2.5.5",
     "matplotlib>=3.10.7",
+    "minio>=7.2.18",
     "moderngl>=5.12.0",
     "moderngl-window>=3.1.1",
     "numpy>=2.2.6",
@@ -23,6 +27,7 @@ dependencies = [
     "scikit-image>=0.25.2",
     "scikit-learn>=1.7.2",
     "scipy>=1.15.3",
+    "tensorboard>=2.20.0",
     "torch>=2.9.0",
     "torch-scatter",
     "torchvision>=0.24.0",

@@ -1,6 +1,9 @@
 import os
+from pathlib import Path
 import re
 from os.path import exists, join
+import sys
+sys.path.append(str(Path(__file__).parents[1]))
 
 import cv2
 import numpy as np
@@ -8,6 +11,10 @@ import pandas as pd
 from tqdm import tqdm
 import torch
 from torch.utils.data import Dataset
+from torch.utils.data._utils.collate import default_collate
+
+from BorealHDR.scripts.classes.class_image_emulator import ImageEmulatorOneSequence
+from kornia.color import rgb_to_grayscale, raw_to_rgb, CFA
 
 class CustomDataset(Dataset):
     def __init__(self, data_folders, transform=None):
@@ -18,211 +25,108 @@ class CustomDataset(Dataset):
         """
         self.data_folder = data_folders
         self.transform = transform
-        self.bracketing_values = np.array([2.0, 4.0, 8.0, 16.0, 32.0])
-        self.image_paths = []
+        self.bracketing_values = np.array([1.0, 2.0, 4.0, 8.0, 16.0, 32.0])
+        self.emulator = ImageEmulatorOneSequence(
+            calibration_file="pcalib_inside1.txt",
+            exposure_times_bracketing=self.bracketing_values,
+            color_bayer=False,
+            device='cpu'
+        )
+        self.inputs = []
         self.labels = []
 
         for folder in data_folders:
             print(f"Loading data from folder {folder}")
             inputs, labels = self.load_data_from_folder(folder)
-            self.image_paths.extend(inputs)
+            self.inputs.extend(inputs)
             self.labels.extend(labels)
 
     def __len__(self):
-        return len(self.image_paths)
+        return len(self.inputs)
 
     def __getitem__(self, idx):
 
-        image_og = cv2.imread(self.image_paths[idx], cv2.IMREAD_UNCHANGED)
-        image_gray = cv2.cvtColor(image_og, cv2.COLOR_BAYER_RG2GRAY)
-        image = (image_gray / 16.0).astype(np.uint8)
+        bracket_images_t0, bracket_images_t1, target_exposure_t0 = self.inputs[idx]
+        img_t0 = self.emulator.emulate_image(target_exposure_t0, bracket_images_t0)["emulated_img"]
+
+        # img_t0 #12bits bayer image
+        img_t0 = img_t0 / 16.0
+        image = raw_to_rgb(img_t0.unsqueeze(0).unsqueeze(0), cfa=CFA.RG)
+        image = rgb_to_grayscale(image).squeeze(0)
 
         if self.transform:
+            image = image.permute(1, 2, 0).numpy()
             augmented = self.transform(image=image)
             image = augmented["image"]
         
-        label = self.labels[idx]
+        label = self.labels[idx].copy()
+        label = label[["timestamp", "ty", "tz", "tx", "qy", "qz", "qx", "qw"]]
 
-        return image, label
-    
-    def load_data_from_folder(self, folder):
-        raise NotImplementedError("Subclasses should implement this method.")
+        training_data = {
+            "image": image,
+            "first_exposure": torch.Tensor([target_exposure_t0]),
+            "next_brackets": bracket_images_t1,
+            "target": label
+        }
 
-###############################################################################################################################
-class AutoExposureDataset(CustomDataset):
-    def __init__(self, data_folders, transform=None):
-        """
-        Args:
-            data_folder: The folder containing the dataset
-            transform: The transformations to apply to the images
-        """
-        super().__init__(data_folders, transform)
+        return training_data
     
     def load_data_from_folder(self, folder):
 
-        image_paths = []
+        training_data = []
         labels = []
         for traj in tqdm(os.listdir(folder)):
             data_path = join(folder, traj)
             exposure_file = join(data_path, "optimal_exposure_times.txt")
-            if not exists(exposure_file):
-                print(f"Exposure file not found for {data_path}, skipping...")
-                continue
-            df = pd.read_csv(exposure_file, header=None, names=["exposure_time"])
-
-            for bracket in self.bracketing_values:
-                bracket_path = join(data_path, str(bracket))
-                if not exists(bracket_path):
-                    print(f"Bracket path {bracket_path} does not exist, skipping...")
-                    continue
-                sorted_files = sorted([f for f in os.listdir(bracket_path) if f.endswith(".png")])
-
-                for idx in range(len(df)-1):
-                    labels.append(np.log2(df["exposure_time"][idx+1]/ bracket))
-                    image_paths.append(join(bracket_path, sorted_files[idx]))
-
-        return image_paths, labels
-    
-
-###############################################################################################################################
-class AutoExposureCovarianceDataset(CustomDataset):
-    def __init__(self, data_folders, transform=None):
-        """
-        Args:
-            data_folder: The folder containing the dataset
-            transform: The transformations to apply to the images
-        """
-        super().__init__(data_folders, transform)
-    
-    def load_data_from_folder(self, folder):
-
-        # TODO: Skip Nan values in label (and related images)
-
-        image_paths = []
-        labels = []
-        for traj in tqdm(os.listdir(folder)):
-            # if traj == "backpack_2023-04-21-09-41-22" or traj == "backpack_2023-04-21-10-46-54":
-            if "2023-04-21" in traj or "2023-04-20" in traj:
-                print(f"Processing trajectory: {traj}")
-                data_path = join(folder, traj)
-                exposure_file = join(data_path, "minimal_covariance_exposure_times_trans_video.txt")
-                if not exists(exposure_file):
-                    print(f"Exposure file not found for {data_path}, skipping...")
-                    continue
-                df = pd.read_csv(exposure_file, header=None, names=["exposure_time"])
-                if df["exposure_time"].isnull().any():
-                    print(f"NaN values found in {exposure_file}, skipping trajectory {traj}...")
-                    continue
-
-                ################################################################################
-                # Apply exponential moving average to exposure_time values
-                alpha = 0.3  # Smoothing factor, adjust as needed
-                ema_exposure = []
-                for idx, val in enumerate(df["exposure_time"]):
-                    if idx == 0:
-                        ema_exposure.append(val)
-                    else:
-                        ema_exposure.append(alpha * val + (1 - alpha) * ema_exposure[-1])
-                df["exposure_time"] = ema_exposure
-                ################################################################################
-
-                for bracket in self.bracketing_values:
-                    bracket_path = join(data_path, str(bracket))
-                    if not exists(bracket_path):
-                        print(f"Bracket path {bracket_path} does not exist, skipping...")
-                        continue
-                    sorted_files = sorted([f for f in os.listdir(bracket_path) if f.endswith(".png")])
-
-                    for idx in range(len(df)-1):
-                        if abs(df["exposure_time"][idx+1] - df["exposure_time"][idx]) < 5.0:
-                            labels.append(np.log2(df["exposure_time"][idx+1]/ bracket))
-                            image_paths.append(join(bracket_path, sorted_files[idx]))
-                        # else:
-                        #     print(f"Skipping difference is: {abs(df['exposure_time'][idx+1] - df['exposure_time'][idx])}")
-            else:
+            lidar_file = join(data_path, "lidar_trajectory.csv")
+            if not exists(exposure_file) or not exists(lidar_file):
+                print(f"Exposure or Lidar file not found for {data_path}, skipping...")
                 continue
 
-        if labels:
-            import matplotlib.pyplot as plt
-            all_labels = np.array(labels).flatten()
-            print(f"Labels distribution:")
-            print(f"Min: {np.min(all_labels)}, Max: {np.max(all_labels)}, Mean: {np.mean(all_labels)}, Std: {np.std(all_labels)}")
+            exposure_df = pd.read_csv(exposure_file, header=None, names=["exposure_time"])
+            lidar_df = pd.read_csv(lidar_file, names=["timestamp", "tx", "ty", "tz", "qx", "qy", "qz", "qw"], sep=" ", header=None)
+            images_df = self.create_dataframe(data_path, self.bracketing_values)
 
-            plt.figure(figsize=(8, 4))
-            plt.hist(all_labels, bins=50, color='skyblue', edgecolor='black')
-            plt.title("Distribution of Labels")
-            plt.xlabel("Label Value")
-            plt.ylabel("Frequency")
-            plt.grid(True)
-            plt.show()
+            for index in exposure_df.index[:-1]:
+                optimal_exposure_t0 = exposure_df["exposure_time"].iloc[index]
+                brackets_t0 = images_df.iloc[:, index].dropna().values
+                brackets_t1 = images_df.iloc[:, index + 1].dropna().values
 
-        return image_paths, labels
+                labels.append(lidar_df)
+                training_data.append((brackets_t0, brackets_t1, optimal_exposure_t0))
 
-###############################################################################################################################
-class CovarianceDataset(CustomDataset):
-    def __init__(self, data_folders, transform=None):
-        """
-        Args:
-            data_folder: The folder containing the dataset
-            transform: The transformations to apply to the images
-        """
-        super().__init__(data_folders, transform)
-
-    def __len__(self):
-        return len(self.image_paths)
+        return training_data, labels
     
-    def load_data_from_folder(self, folder):
+    def create_dataframe(self, path_imgs, bracket_values):
+        bracket_lists = []
+        for bracket_value in bracket_values:
+            path_bracket = Path(path_imgs, str(bracket_value))
+            bracket_list = []
+            for img_filename in sorted(os.listdir(path_bracket)):
+                bracket_list.append(str(path_bracket / img_filename))
+            bracket_lists.append(bracket_list)
+        df = pd.DataFrame(bracket_lists)
+        df.index = bracket_values
+        return df
+    
 
-        image_paths = []
-        labels = []
-        for traj in tqdm(os.listdir(folder)):
-            data_path = join(folder, traj)
-            covariance_folder = join(data_path, "covariance")
-            if not exists(covariance_folder):
-                print(f"Covariance folder not found for {data_path}, skipping...")
-                break  # Skip the whole loop for this trajectory
-
-            for bracket in self.bracketing_values:
-                img_bracket_path = join(data_path, str(bracket))
-                covariance_bracket_path = join(covariance_folder, str(bracket))
-                if not exists(covariance_bracket_path) or not exists(img_bracket_path):
-                    print(f"Covariance or image bracket path {covariance_bracket_path} does not exist, skipping...")
-                    break # Skip the whole loop for this bracket
-
-                sorted_files = sorted([f for f in os.listdir(img_bracket_path) if f.endswith(".png")])
-
-                for file in sorted_files:
-                    try:
-                        covariance = np.load(join(covariance_bracket_path, f"{file.split('.')[0]}.npy"))
-                    except Exception as e:
-                        print(f"Covariance file does not exist for {file} in {covariance_bracket_path}, skipping...")
-                        continue
-                    if np.mean(np.diag(covariance)) > 2:
-                        print("################################################################################")
-                        print(f"Covariance matrix for {file} has a mean diagonal value greater than 2, skipping...")
-                        print(f"Mean diagonal value: {np.mean(np.diag(covariance))}")
-                        print("################################################################################")
-                        continue
-                    # Create a writable copy of the diagonal to avoid PyTorch warnings
-                    diagonal_cov = np.diag(covariance).copy().reshape(6, 1)  # Assuming covariance is 6x6
-                    labels.append(diagonal_cov)
-                    image_paths.append(join(img_bracket_path, file))
-
-        # Print and display the distribution of the diagonal values in the labels
-        if labels:
-            import matplotlib.pyplot as plt
-            print(np.array(labels).shape)
-            all_diags = np.array(labels).flatten()
-            print(f"Shape of all_diags: {all_diags.shape}")
-            print("Labels distribution:")
-            print(f"Min: {np.min(all_diags)}, Max: {np.max(all_diags)}, Mean: {np.mean(all_diags)}, Std: {np.std(all_diags)}")
-
-            plt.figure(figsize=(8, 4))
-            plt.hist(all_diags, density=False, color='skyblue', edgecolor='black', range=(np.min(all_diags), 1e-6))
-            plt.title("Distribution of Diagonal Covariance Values")
-            plt.xlabel("Value")
-            plt.ylabel("Frequency")
-            plt.grid(True)
-            plt.show()
-
-        return image_paths, labels
+def lightning_collate_fn(batch):
+    elem = batch[0]
+    if isinstance(elem, dict):
+        return {k: lightning_collate_fn([d[k] for d in batch]) for k in elem}
+    elif isinstance(elem, np.ndarray):
+        # Check if it's a numpy array of objects (like strings)
+        if elem.dtype == np.object_ or elem.dtype.kind in ('U', 'S', 'O'):
+            return batch  # list of numpy arrays of strings, keep as-is
+        else:
+            return default_collate(batch)
+    elif isinstance(elem, (torch.Tensor, int, float)):
+        return default_collate(batch)
+    elif isinstance(elem, str):
+        return list(batch)
+    elif isinstance(elem, list) and all(isinstance(x, str) for x in elem):
+        return batch  # list of strings, one per sample
+    elif isinstance(elem, pd.DataFrame):
+        return batch  # list of DataFrames, one per sample
+    else:
+        return batch  # fallback (keep as-is)
