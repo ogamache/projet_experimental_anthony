@@ -170,3 +170,5 @@ tmp*
 droid_slam
 
 DROID-SLAM/
+
+lightning_logs/
