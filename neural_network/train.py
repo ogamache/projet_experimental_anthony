@@ -1,5 +1,6 @@
 import argparse
 import os
+os.chdir("..")
 from datetime import datetime
 from os.path import dirname, join, realpath
 
@@ -8,6 +9,7 @@ import wandb
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint, RichProgressBar
 from pytorch_lightning.loggers import WandbLogger
+import numpy as np
 
 from datamodules import DataModule
 from networks import ExposureResNet
@@ -81,6 +83,7 @@ if __name__ == "__main__":
     with open(join(save_folder, "details.yaml"), "w") as file:
         yaml.dump(details, file)
 
+    calib = np.loadtxt("DROID-SLAM/calib/belair.txt", delimiter=" ")
     # Start cross-validation
     for k in range(args.folds):
         if args.folds > 1:
@@ -94,18 +97,18 @@ if __name__ == "__main__":
 
         # Create an instance of the selected model
         if MODEL_TYPE == "ResNet":
-            model = ExposureResNet(output_size=OUTPUT_SIZE, lr=LEARNING_RATE)
+            model = ExposureResNet(output_size=OUTPUT_SIZE, lr=LEARNING_RATE, calib=calib, n_images=3)
         else:
             raise ValueError("Invalid model type.")
 
         # Define logger
-        logger = WandbLogger(
-            log_model=False,
-            project=args.project,
-            save_dir=fold_save_folder,
-            name=f"{time_str}_fold_{k+1}",
-            tags=tags,
-        )
+        # logger = WandbLogger(
+        #     log_model=False,
+        #     project=args.project,
+        #     save_dir=fold_save_folder,
+        #     name=f"{time_str}_fold_{k+1}",
+        #     tags=tags,
+        # )
 
         # Define callbacks
         callbacks = [
@@ -118,11 +121,11 @@ if __name__ == "__main__":
         trainer = Trainer(
             max_epochs=NUM_EPOCHS,
             accelerator="gpu",
-            logger=logger,
+            # logger=logger,
             log_every_n_steps=1,
             enable_checkpointing=True,
             callbacks=callbacks,
-            precision="16-mixed",
+            precision="32-true",
         )
 
         # Train the model

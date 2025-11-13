@@ -38,6 +38,7 @@ def geodesic_loss(Ps, Gs, graph, gamma=0.9) -> torch.Tensor:
         d = (dG * dP.inv()).log() # (Compute the displacement between the estimated relative pose and the ground truth relative pose)
 
         tau, phi = d.split([3, 3], dim=-1)
+        print(tau.requires_grad, phi.requires_grad)
         geodesic_loss += w * (
                 tau.norm(dim=-1).mean() +
                 phi.norm(dim=-1).mean())
@@ -71,7 +72,7 @@ def load_image(imagedir, imfile, get_img_dims=False):
 
 
 # Number of frames
-N = 7
+N = 3
 path = "/home/alienware/Desktop/tmp/training_trajs/backpack_2023-04-20-09-29-14/16.0"
 
 # Load intrisics
@@ -83,7 +84,7 @@ K[0,0] = fx
 K[0,2] = cx
 K[1,1] = fy
 K[1,2] = cy
-intrinsics = torch.as_tensor([fx, fy, cx, cy])
+intrinsics = torch.tensor([fx, fy, cx, cy])
 
 _, img_dims = load_image(path, "1681997354956098048.png", get_img_dims=True)
 # Adjust intrinsics for image resizing
@@ -125,6 +126,7 @@ Gs, images, disp0, intrinsics0 = Gs.cuda(), images.cuda(), disp0.cuda(), intrins
 
 images.requires_grad = True
 
+print(Gs.shape, images.shape, disp0.shape, intrinsics0.shape)
 poses_est, disps_est, residuals = model(Gs, images, disp0, intrinsics0,
                     graph, num_steps=15, fixedp=2)
 # Poses est has a length of 15, which is the number of refinement steps
@@ -138,3 +140,5 @@ loss.backward()
 grad = images.grad.squeeze()
 for image in grad:
     print(image.norm())
+
+# torch.Size([1, 3]) torch.Size([1, 3, 3, 384, 512]) torch.Size([1, 3, 48, 64]) torch.Size([1, 3, 4])
