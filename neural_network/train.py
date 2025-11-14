@@ -3,6 +3,9 @@ import os
 os.chdir("..")
 from datetime import datetime
 from os.path import dirname, join, realpath
+from pydantic.warnings import UnsupportedFieldAttributeWarning
+import warnings
+warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
 
 import torch
 import wandb
@@ -34,9 +37,11 @@ DATA_FOLDERS = [
 BATCH_SIZE = 2
 NUM_EPOCHS = 50
 PATIENCE = 20  # Set to NUM_EPOCHS to disable early stopping
-LEARNING_RATE = 0.0005
-INPUT_SIZE = (640, 480)   # Size of the input images
+LEARNING_RATE = 0.00001
+INPUT_SIZE = (400, 200)   # Size of the input images (DROID-SLAM default: (512, 384))
 OUTPUT_SIZE = 1  # Size of the output (number of classes or regression output)
+FRACT = 1.0
+OVERFIT = True
 
 MODEL_TYPE = "ResNet"
 DATA_SPLIT = 10  # Number of parts to split the dataset into test, validation     
@@ -47,7 +52,7 @@ SEED = 42  # Seed for the random split
 if __name__ == "__main__":
 
     # Check if CUDA is available
-    torch.set_float32_matmul_precision("medium")
+    # torch.set_float32_matmul_precision("medium")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # Initialize Weights & Biases
@@ -61,6 +66,8 @@ if __name__ == "__main__":
         batch_size=BATCH_SIZE,
         split_ratio=DATA_SPLIT,
         split_seed=SEED,
+        fract=FRACT,
+        overfit=OVERFIT,
     )
 
     # Create a save folder matching the date and time
@@ -97,7 +104,7 @@ if __name__ == "__main__":
 
         # Create an instance of the selected model
         if MODEL_TYPE == "ResNet":
-            model = ExposureResNet(output_size=OUTPUT_SIZE, lr=LEARNING_RATE, calib=calib, n_images=3)
+            model = ExposureResNet(output_size=OUTPUT_SIZE, lr=LEARNING_RATE, calib=calib, n_images=8)
         else:
             raise ValueError("Invalid model type.")
 
@@ -119,22 +126,24 @@ if __name__ == "__main__":
         ]
 
         trainer = Trainer(
-            max_epochs=NUM_EPOCHS,
+            max_epochs=1000 if OVERFIT else NUM_EPOCHS,
             accelerator="gpu",
             # logger=logger,
+            accumulate_grad_batches=1 if OVERFIT else 4,
             log_every_n_steps=1,
             enable_checkpointing=True,
             callbacks=callbacks,
             precision="32-true",
+            overfit_batches=1 if OVERFIT else 0,
         )
 
         # Train the model
         datamodule.k = k
         trainer.fit(model, datamodule)
 
-        # Save the model as a TorchScript file
-        best_checkpoint = torch.load(join(fold_save_folder, "model.ckpt"), weights_only=True)
-        model.load_state_dict(best_checkpoint["state_dict"])
-        model.to_torchscript(join(fold_save_folder, "model.pt"))
+        # # Save the model as a TorchScript file
+        # best_checkpoint = torch.load(join(fold_save_folder, "model.ckpt"), weights_only=False)
+        # model.load_state_dict(best_checkpoint["state_dict"])
+        # model.to_torchscript(join(fold_save_folder, "model.pt"))
 
         wandb.finish()

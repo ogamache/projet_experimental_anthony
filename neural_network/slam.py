@@ -39,7 +39,7 @@ class DroidSlam(torch.nn.Module):
             self.Gs = SE3.IdentityLike(Ps)
 
         if self.disp0 is None:
-            self.disp0 = torch.ones((images.size(0), images.shape[2], images.shape[3]//8, images.shape[4]//8), device=images.device)
+            self.disp0 = torch.ones((images.size(0), self.num_images, images.shape[3]//8, images.shape[4]//8), device=images.device)
         if self.intrinsics.size(0) != images.size(0):
             self.intrinsics = self.intrinsics.tile(images.size(0), 1, 1)
 

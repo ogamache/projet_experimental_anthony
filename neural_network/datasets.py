@@ -17,11 +17,11 @@ from BorealHDR.scripts.classes.class_image_emulator import ImageEmulatorOneSeque
 from kornia.color import rgb_to_grayscale, raw_to_rgb, CFA
 
 def pose_from_lidar(lidar, timestamp):
-    return torch.from_numpy(lidar.loc[np.argmin(lidar["timestamp"].values - float(timestamp))][
+    return torch.from_numpy(lidar.loc[np.argmin(np.abs(lidar['timestamp'].values - (float(timestamp))*1e-9))][
                          ["ty", "tz", "tx", "qy", "qz", "qx", "qw"]].values)
 
 class CustomDataset(Dataset):
-    def __init__(self, data_folders, transform=None):
+    def __init__(self, data_folders, transform=None, fract: float = 1.):
         """
         Args:
             data_folder: The folder containing the dataset
@@ -33,7 +33,7 @@ class CustomDataset(Dataset):
         self.emulator = ImageEmulatorOneSequence(
             calibration_file="pcalib_inside1.txt",
             exposure_times_bracketing=self.bracketing_values,
-            color_bayer=False,
+            color_bayer=True,
             device='cpu'
         )
         self.inputs = []
@@ -45,6 +45,12 @@ class CustomDataset(Dataset):
             self.inputs.extend(inputs)
             self.labels.extend(labels)
 
+        if fract < 1.0:
+            n_samples = int(len(self.inputs) * fract)
+            self.inputs = self.inputs[:n_samples]
+            self.labels = self.labels[:n_samples]
+            print(f"Using only {n_samples} samples from the dataset.")
+
     def __len__(self):
         return len(self.inputs)
 
@@ -52,19 +58,51 @@ class CustomDataset(Dataset):
         label = self.labels[idx].copy()
         label = label[["timestamp", "ty", "tz", "tx", "qy", "qz", "qx", "qw"]]
 
-        bracket_images_t0, bracket_images_t1, bracket_images_t2, target_exposure_t0, target_exposure_t1 = self.inputs[idx]
+        bracket_images_t0, bracket_images_t1, bracket_images_t2, bracket_images_t3, bracket_images_t4, bracket_images_t5, bracket_images_t6, bracket_images_t7, target_exposure_t0, target_exposure_t1, target_exposure_t2, target_exposure_t3, target_exposure_t4, target_exposure_t5, target_exposure_t6 = self.inputs[idx]
+        
         res = self.emulator.emulate_image(target_exposure_t0, bracket_images_t0)
         img_t0 = res["emulated_img"]
         img_p0 = pose_from_lidar(label, res["timestamp"])
+        
         res = self.emulator.emulate_image(target_exposure_t1, bracket_images_t1)
-        img_p1 = pose_from_lidar(label, res["timestamp"])
         img_t1 = res["emulated_img"]
+        img_p1 = pose_from_lidar(label, res["timestamp"])
+        
+        res = self.emulator.emulate_image(target_exposure_t2, bracket_images_t2)
+        img_t2 = res["emulated_img"]
+        img_p2 = pose_from_lidar(label, res["timestamp"])
+        
+        res = self.emulator.emulate_image(target_exposure_t3, bracket_images_t3)
+        img_t3 = res["emulated_img"]
+        img_p3 = pose_from_lidar(label, res["timestamp"])
+        
+        res = self.emulator.emulate_image(target_exposure_t4, bracket_images_t4)
+        img_t4 = res["emulated_img"]
+        img_p4 = pose_from_lidar(label, res["timestamp"])
+        
+        res = self.emulator.emulate_image(target_exposure_t5, bracket_images_t5)
+        img_t5 = res["emulated_img"]
+        img_p5 = pose_from_lidar(label, res["timestamp"])
+        
+        res = self.emulator.emulate_image(target_exposure_t6, bracket_images_t6)
+        img_t6 = res["emulated_img"]
+        img_p6 = pose_from_lidar(label, res["timestamp"])
 
-        # img_t0 #12bits bayer image
+        # Convert 12-bit bayer images to RGB
         img_t0 = img_t0 / 16.0
         image0 = raw_to_rgb(img_t0.unsqueeze(0).unsqueeze(0), cfa=CFA.RG).squeeze(0)
         img_t1 = img_t1 / 16.0
         image1 = raw_to_rgb(img_t1.unsqueeze(0).unsqueeze(0), cfa=CFA.RG).squeeze(0)
+        img_t2 = img_t2 / 16.0
+        image2 = raw_to_rgb(img_t2.unsqueeze(0).unsqueeze(0), cfa=CFA.RG).squeeze(0)
+        img_t3 = img_t3 / 16.0
+        image3 = raw_to_rgb(img_t3.unsqueeze(0).unsqueeze(0), cfa=CFA.RG).squeeze(0)
+        img_t4 = img_t4 / 16.0
+        image4 = raw_to_rgb(img_t4.unsqueeze(0).unsqueeze(0), cfa=CFA.RG).squeeze(0)
+        img_t5 = img_t5 / 16.0
+        image5 = raw_to_rgb(img_t5.unsqueeze(0).unsqueeze(0), cfa=CFA.RG).squeeze(0)
+        img_t6 = img_t6 / 16.0
+        image6 = raw_to_rgb(img_t6.unsqueeze(0).unsqueeze(0), cfa=CFA.RG).squeeze(0)
 
         if self.transform:
             image0 = image0.permute(1, 2, 0).numpy()
@@ -75,14 +113,49 @@ class CustomDataset(Dataset):
             augmented1 = self.transform(image=image1)
             image1 = augmented1["image"]
 
+            image2 = image2.permute(1, 2, 0).numpy()
+            augmented2 = self.transform(image=image2)
+            image2 = augmented2["image"]
+
+            image3 = image3.permute(1, 2, 0).numpy()
+            augmented3 = self.transform(image=image3)
+            image3 = augmented3["image"]
+
+            image4 = image4.permute(1, 2, 0).numpy()
+            augmented4 = self.transform(image=image4)
+            image4 = augmented4["image"]
+
+            image5 = image5.permute(1, 2, 0).numpy()
+            augmented5 = self.transform(image=image5)
+            image5 = augmented5["image"]
+
+            image6 = image6.permute(1, 2, 0).numpy()
+            augmented6 = self.transform(image=image6)
+            image6 = augmented6["image"]
+
         training_data = {
             "image0": image0,
             "image1": image1,
+            "image2": image2,
+            "image3": image3,
+            "image4": image4,
+            "image5": image5,
+            "image6": image6,
             "exposure0": torch.Tensor([target_exposure_t0]),
             "exposure1": torch.Tensor([target_exposure_t1]),
+            "exposure2": torch.Tensor([target_exposure_t2]),
+            "exposure3": torch.Tensor([target_exposure_t3]),
+            "exposure4": torch.Tensor([target_exposure_t4]),
+            "exposure5": torch.Tensor([target_exposure_t5]),
+            "exposure6": torch.Tensor([target_exposure_t6]),
             "pose0": img_p0,
             "pose1": img_p1,
-            "next_brackets": bracket_images_t2,
+            "pose2": img_p2,
+            "pose3": img_p3,
+            "pose4": img_p4,
+            "pose5": img_p5,
+            "pose6": img_p6,
+            "next_brackets": bracket_images_t7,
             "target": label
         }
 
@@ -104,15 +177,26 @@ class CustomDataset(Dataset):
             lidar_df = pd.read_csv(lidar_file, names=["timestamp", "tx", "ty", "tz", "qx", "qy", "qz", "qw"], sep=" ", header=None)
             images_df = self.create_dataframe(data_path, self.bracketing_values)
 
-            for index in exposure_df.index[:-2]:
+            for index in exposure_df.index[:-35]:
                 optimal_exposure_t0 = exposure_df["exposure_time"].iloc[index]
-                optimal_exposure_t1 = exposure_df["exposure_time"].iloc[index + 1]
+                optimal_exposure_t1 = exposure_df["exposure_time"].iloc[index + 5]
+                optimal_exposure_t2 = exposure_df["exposure_time"].iloc[index + 10]
+                optimal_exposure_t3 = exposure_df["exposure_time"].iloc[index + 15]
+                optimal_exposure_t4 = exposure_df["exposure_time"].iloc[index + 20]
+                optimal_exposure_t5 = exposure_df["exposure_time"].iloc[index + 25]
+                optimal_exposure_t6 = exposure_df["exposure_time"].iloc[index + 30]
+                
                 brackets_t0 = images_df.iloc[:, index].dropna().values
-                brackets_t1 = images_df.iloc[:, index + 1].dropna().values
-                brackets_t2 = images_df.iloc[:, index + 2].dropna().values
-
+                brackets_t1 = images_df.iloc[:, index + 5].dropna().values
+                brackets_t2 = images_df.iloc[:, index + 10].dropna().values
+                brackets_t3 = images_df.iloc[:, index + 15].dropna().values
+                brackets_t4 = images_df.iloc[:, index + 20].dropna().values
+                brackets_t5 = images_df.iloc[:, index + 25].dropna().values
+                brackets_t6 = images_df.iloc[:, index + 30].dropna().values
+                brackets_t7 = images_df.iloc[:, index + 35].dropna().values
                 labels.append(lidar_df)
-                training_data.append((brackets_t0, brackets_t1, brackets_t2, optimal_exposure_t0, optimal_exposure_t1))
+                training_data.append((brackets_t0, brackets_t1, brackets_t2, brackets_t3, brackets_t4, brackets_t5, brackets_t6, brackets_t7, 
+                                     optimal_exposure_t0, optimal_exposure_t1, optimal_exposure_t2, optimal_exposure_t3, optimal_exposure_t4, optimal_exposure_t5, optimal_exposure_t6))
 
         return training_data, labels
     
